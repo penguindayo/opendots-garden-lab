@@ -1,0 +1,47 @@
+name: Verify local AI integration
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: garden-tool-development
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.repository == 'penguindayo/opendots-garden-lab' && github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out this public repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # official v4.2.2
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+      - name: Test trusted CI integration code
+        run: node --test scripts/lab.test.mjs
+      - name: Prepare the same official local model
+        continue-on-error: true
+        timeout-minutes: 4
+        run: node scripts/install-ollama.mjs
+      - name: Validate one model response without executing or saving its text
+        id: model
+        continue-on-error: true
+        timeout-minutes: 4
+        run: node scripts/smoke-ai.mjs
+      - name: Publish only boolean integration result
+        if: always() && steps.model.outcome != 'skipped'
+        run: |
+          if [ ! -f results/model-check.json ]; then exit 0; fi
+          git add -- results/model-check.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Record local AI integration boolean check'
+          git push origin HEAD:main
+      - name: Fail if the model integration check failed
+        if: always()
+        run: |
+          if [ '${{ steps.model.outcome }}' != 'success' ]; then exit 1; fi

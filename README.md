@@ -6,13 +6,19 @@
 
 AIは1回の制作につき最大1呼び出し・1600出力token・3分、思考出力なし。APIキーや有料AIへの切り替えはありません。Ollamaは公式v0.40.2配布をSHA-256検証し、runnerの一時領域へ置きます。モデル・ログをリポジトリやActions cache/artifactsへ保存しません。
 
-公開ソースは次の5件だけです。Cookie・認証・非公開の返信は扱わず、リダイレクトは追いません。
+公開ソースは次の7件だけです。Cookie・認証・非公開の返信は扱わず、リダイレクトは追いません。大きなページは先頭64KiBの範囲だけを調べます。
 
 - https://pengu.info
 - https://pengu.info/bbs
 - https://x.com/penguin_expo
 - https://x.com/penguin_expo_
 - https://x.com/Trioxygen_
+- https://expo2027yokohama.or.jp/about/overview/
+- https://expo2027yokohama.or.jp/news/detail/001555.html
+
+[Ollama公式のstructured outputs](https://docs.ollama.com/capabilities/structured-outputs)に従い、JSON schemaを`format`へ指定します。AI案は短いtitle/summaryと2,000 bytes以下のHTML1枚に限定します。失敗理由は `model_unavailable` / `truncated` / `json_invalid` / `schema_invalid` / `html_invalid` の固定分類だけをレビューへ残し、不正な生応答やログを保存しません。
+
+手動専用の `smoke-ai.yml` は、本番と同じモデルのCI結合テストです。公開repoの標準Linux runner・同時1・10分上限で、モデル呼び出しは最大1回・3分です。生成物を制作・公開せず、`results/model-check.json` へ `{valid:boolean,reason:固定分類}` だけを記録します。成功時のreasonは`ok`です。モデル応答を保存・実行せず、本番ジョブの6件/日や既存成果物も変更しません。チェック失敗はworkflow失敗として報告します。
 
 `results/public-<UTCの4時間枠整数>/artifact.json` と `files/` に成果物を保存します。`results/status.json` は最新32件のメタデータです。古いファイルは消しません。最大6件/UTC日・同時1実行・1workflow20分で、同じ時間枠の再実行は重複制作しません。GitHubのスケジュールは遅延・無効化される場合があり、24時間の連続計算を保証しません。手動の `workflow_dispatch` でも同じ上限が適用されます。
 

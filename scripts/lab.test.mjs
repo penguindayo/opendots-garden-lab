@@ -23,12 +23,15 @@ import {
   itinerary,
   publicResearch,
   aiCandidate,
+  AI_SCHEMA,
+  aiFailureReason,
   makeArtifact,
   develop,
   readStatus,
   eligibility,
   verifyResults,
 } from './lab.mjs';
+import { smokeModel } from './smoke-ai.mjs';
 
 const NOW = Date.UTC(2026, 9, 10);
 const noAI = async () => {
@@ -130,7 +133,7 @@ test('fixed public research sends no credentials and never follows redirects or 
         headers: { 'content-type': 'text/html' },
       }),
   );
-  assert.ok(unavailable.every((s) => !s.available));
+  assert.ok(unavailable.every((s) => s.available && s.excerpt.length === 500));
 });
 
 test('artifact boundary rejects traversal, executable shell extensions, duplicate names and byte overflows', () => {
@@ -192,9 +195,9 @@ test('local AI uses one loopback call with JSON, no thinking, bounded context/to
   assert.equal(body.model, MODEL);
   assert.equal(body.think, false);
   assert.equal(body.stream, false);
-  assert.equal(body.format, 'json');
+  assert.deepEqual(body.format, AI_SCHEMA);
   assert.equal(body.options.num_predict, 1600);
-  assert.equal(body.options.num_ctx, 8192);
+  assert.equal(body.options.num_ctx, 4096);
   assert.doesNotMatch(
     JSON.stringify(calls[0].options.headers),
     /authorization|cookie/i,
@@ -406,4 +409,140 @@ test('workflow uses only SHA-pinned official checkout and free public-repo stand
   );
   assert.match(workflow, /git add -- results\//);
   assert.match(workflow, /git push origin HEAD:main/);
+});
+
+test('AI failures expose only fixed reasons and never raw model or exception text', async () => {
+  const sentinel = 'PRIVATE_SENTINEL_MUST_NOT_ESCAPE';
+  const modes = [
+    [
+      'model_unavailable',
+      async () => {
+        throw new Error(sentinel);
+      },
+    ],
+    ['model_unavailable', async () => new Response(sentinel, { status: 503 })],
+    [
+      'truncated',
+      async () =>
+        Response.json({ done: false, message: { content: sentinel } }),
+    ],
+    [
+      'truncated',
+      async () =>
+        Response.json({
+          done: true,
+          done_reason: 'length',
+          message: { content: sentinel },
+        }),
+    ],
+    [
+      'json_invalid',
+      async () =>
+        Response.json({ done: true, message: { content: '{' + sentinel } }),
+    ],
+    [
+      'schema_invalid',
+      async () =>
+        Response.json({
+          done: true,
+          message: { content: JSON.stringify({ raw: sentinel }) },
+        }),
+    ],
+    [
+      'html_invalid',
+      async () =>
+        Response.json({
+          done: true,
+          message: {
+            content: JSON.stringify({
+              ...modelOutput(),
+              files: [
+                {
+                  path: 'ai-variant.html',
+                  content: '<h1>No document metadata</h1>',
+                },
+              ],
+            }),
+          },
+        }),
+    ],
+  ];
+  for (const [reason, response] of modes) {
+    let calls = 0;
+    await assert.rejects(
+      aiCandidate('garden-checklist', [], async (...args) => {
+        calls++;
+        return response(...args);
+      }),
+      (error) => {
+        assert.equal(aiFailureReason(error), reason);
+        assert.doesNotMatch(error.message, new RegExp(sentinel));
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  }
+});
+
+test('manual smoke stores only public boolean/reason and never creates or alters production jobs', async () =>
+  temporary(async (dir) => {
+    const before = await develop(dir, { now: NOW, fetcher, aiEnabled: false });
+    const production = await readFile(
+      join(dir, 'results', before.id, 'artifact.json'),
+      'utf8',
+    );
+    const status = await readFile(join(dir, 'results', 'status.json'), 'utf8');
+    let calls = 0;
+    const report = await smokeModel(dir, {
+      fetcher: async (...args) => {
+        calls++;
+        return fetcher(...args);
+      },
+    });
+    assert.deepEqual(report, { valid: true, reason: 'ok' });
+    assert.equal(calls, 1);
+    assert.equal(globalThis.__GARDEN_AI_EXECUTED, undefined);
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(dir, 'results', 'model-check.json'), 'utf8'),
+      ),
+      report,
+    );
+    assert.equal(
+      await readFile(join(dir, 'results', before.id, 'artifact.json'), 'utf8'),
+      production,
+    );
+    assert.equal(
+      await readFile(join(dir, 'results', 'status.json'), 'utf8'),
+      status,
+    );
+    const failed = await smokeModel(dir, {
+      fetcher: async () => {
+        throw new Error('Do not publish this exception');
+      },
+    });
+    assert.deepEqual(failed, { valid: false, reason: 'model_unavailable' });
+    assert.doesNotMatch(
+      await readFile(join(dir, 'results', 'model-check.json'), 'utf8'),
+      /exception|message|content|files/,
+    );
+  }));
+
+test('manual smoke workflow is bounded integration CI with no schedule and only a boolean result push', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/smoke-ai.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /schedule:|cron:|scripts\/run\.mjs|secrets\./);
+  assert.match(workflow, /runs-on: ubuntu-24\.04/);
+  assert.match(workflow, /timeout-minutes: 10/);
+  assert.match(workflow, /group: garden-tool-development/);
+  assert.match(workflow, /github\.event\.repository\.private == false/);
+  assert.deepEqual(
+    [...workflow.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]),
+    ['actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'],
+  );
+  assert.match(workflow, /git add -- results\/model-check\.json/);
+  assert.match(workflow, /steps\.model\.outcome.*success.*exit 1/);
 });
