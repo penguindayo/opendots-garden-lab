@@ -1,0 +1,5 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>園芸博お出かけ予算</title><style>body{font:18px system-ui;max-width:38rem;margin:2rem auto;padding:1rem;color:#24412b;background:#f4faf2}label,output{display:block;margin:1rem 0}input,button{font:inherit;padding:.5rem;max-width:100%}</style><h1>園芸博お出かけ予算</h1><p>下書きです。開催情報・料金は公式情報と照合してください。</p><label>人数<input id="p" type="number" min="1" value="1"></label><label>交通費/人<input id="t" type="number" min="0" value="0"></label><label>入場料/人<input id="e" type="number" min="0" value="0"></label><label>飲食費/人<input id="f" type="number" min="0" value="0"></label><button id="go">合計</button><output id="out"></output><script>const budget=function budget(people, travel, ticket, food) {
+  const n = (value) =>
+    Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+  return Math.round(n(people)) * (n(travel) + n(ticket) + n(food));
+};document.getElementById("go").onclick=()=>document.getElementById("out").textContent=budget(...["p","t","e","f"].map(id=>document.getElementById(id).value)).toLocaleString("ja-JP")+"円";</script></html>
