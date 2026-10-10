@@ -1,0 +1,50 @@
+name: Develop public garden tools
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: garden-tool-development
+  cancel-in-progress: false
+
+jobs:
+  develop:
+    if: github.repository == 'penguindayo/opendots-garden-lab' && github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out this public repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # official v4.2.2
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+      - name: Test trusted repository code
+        run: node --test scripts/lab.test.mjs
+      - name: Check UTC slot and daily cap
+        id: slot
+        run: node scripts/run.mjs --check
+      - name: Prepare local model using official pinned distribution
+        if: steps.slot.outputs.eligible == 'true'
+        continue-on-error: true
+        timeout-minutes: 8
+        run: node scripts/install-ollama.mjs
+      - name: Develop tools without executing generated code
+        if: steps.slot.outputs.eligible == 'true'
+        timeout-minutes: 5
+        run: node scripts/run.mjs
+      - name: Verify immutable public artifacts
+        if: steps.slot.outputs.eligible == 'true'
+        run: node scripts/run.mjs --verify
+      - name: Commit only generated public results to this repository
+        if: steps.slot.outputs.eligible == 'true'
+        run: |
+          git add -- results/
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Develop and statically review public garden tool variants'
+          git push origin HEAD:main
