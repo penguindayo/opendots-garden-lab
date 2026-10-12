@@ -148,9 +148,36 @@ export async function publicResearch(fetcher = fetch) {
 }
 
 export function budget(people, travel, ticket, food) {
-  const n = (value) =>
-    Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
-  return Math.round(n(people)) * (n(travel) + n(ticket) + n(food));
+  const labels = ['人数', '交通費', '入場料', '飲食費'];
+  const values = [people, travel, ticket, food].map((value, index) => {
+    const text =
+      typeof value === 'string' || typeof value === 'number'
+        ? String(value).trim()
+        : '';
+    const min = index === 0 ? 1 : 0;
+    const max = index === 0 ? 1000 : 1000000000;
+    const n = Number(text);
+    if (
+      !/^[0-9]+$/.test(text) ||
+      text.length > 12 ||
+      !Number.isSafeInteger(n) ||
+      n < min ||
+      n > max
+    ) {
+      const error = new RangeError(
+        labels[index] +
+          'は' +
+          min +
+          '〜' +
+          max +
+          'の半角整数で入力してください。',
+      );
+      error.index = index;
+      throw error;
+    }
+    return n;
+  });
+  return values[0] * (values[1] + values[2] + values[3]);
 }
 export function itinerary(start, minutes, count) {
   const [hour, minute] = String(start).split(':').map(Number);
@@ -183,9 +210,9 @@ export function baselineVariants() {
       path: 'variant-1.html',
       content: shell(
         '園芸博お出かけ予算',
-        '<label>人数<input id="p" type="number" min="1" value="1"></label><label>交通費/人<input id="t" type="number" min="0" value="0"></label><label>入場料/人<input id="e" type="number" min="0" value="0"></label><label>飲食費/人<input id="f" type="number" min="0" value="0"></label><button id="go">合計</button><output id="out"></output><script>const budget=' +
+        '<p>全員の1人あたり費用が同じ場合の概算です。共通費用は含めません。年齢等で費用が異なる場合は別々に計算してください。公式料金を自動入力しません。</p><p id="help">人数は1〜1000人、各費目は0〜10億円の半角整数。これはツール上限で公式条件ではありません。空欄・負数・小数・指数表記・カンマは不可。未確認の費用を0円とみなさないでください。</p><label for="p">人数<input id="p" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="12" value="1" aria-describedby="help error"></label><label for="t">交通費/人（円）<input id="t" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="12" value="0" aria-describedby="help error"></label><label for="e">入場料/人（円）<input id="e" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="12" value="0" aria-describedby="help error"></label><label for="f">飲食費/人（円）<input id="f" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="12" value="0" aria-describedby="help error"></label><button id="go" type="button">合計</button><p id="error" role="alert"></p><output id="out" aria-live="polite" aria-atomic="true"></output><p>入力は保存・送信しません。編集・再表示後は再計算してください。印刷時は合計を消します。購入・予約は行いません。</p><noscript>計算にはJavaScriptが必要です。</noscript><style>#out{overflow-wrap:anywhere}#error{color:#9c1b1b}input:focus-visible,button:focus-visible{outline:3px solid #b24b00;outline-offset:3px}@media print{#go{display:none}}</style><script>const budget=' +
           budget.toString() +
-          ';document.getElementById("go").onclick=()=>document.getElementById("out").textContent=budget(...["p","t","e","f"].map(id=>document.getElementById(id).value)).toLocaleString("ja-JP")+"円";</script>',
+          ";\nconst ids=['p','t','e','f'];\nconst fields=ids.map(id=>document.getElementById(id));\nconst out=document.getElementById('out'),error=document.getElementById('error');\nfunction clearErrors(){error.textContent='';fields.forEach(x=>x.removeAttribute('aria-invalid'));}\nfunction invalidate(){out.textContent='入力が変わりました。再計算してください。';clearErrors();}\nfields.forEach(x=>['input','change'].forEach(type=>x.addEventListener(type,invalidate)));\ndocument.getElementById('go').onclick=()=>{\n out.textContent='';clearErrors();\n try{out.textContent=budget(...fields.map(x=>x.value)).toLocaleString('ja-JP')+'円';}\n catch(issue){error.textContent=issue.message;fields[issue.index].setAttribute('aria-invalid','true');fields[issue.index].focus();}\n};\nwindow.addEventListener('pageshow',invalidate);\nwindow.addEventListener('beforeprint',()=>{out.textContent='';clearErrors();error.textContent='印刷では合計を表示しません。画面で再計算してください。';});\n</script>",
       ),
     },
     {

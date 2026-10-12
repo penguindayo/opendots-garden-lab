@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {
   mkdtemp,
   readFile,
@@ -91,11 +92,17 @@ test('only exact public repository main Linux workflow is eligible', () => {
   );
 });
 
-test('budget and itinerary functions cover invalid inputs, rounding, bounds and midnight', () => {
+test('budget rejects invalid values while itinerary bounds and midnight behavior remain unchanged', () => {
   assert.equal(budget(2, 1000, 2000, 500), 7000);
-  assert.equal(budget('2', -1, '200', Number.NaN), 400);
-  assert.equal(budget(2.6, 1, 2, 3), 18);
-  assert.equal(budget(Infinity, 1, 2, 3), 0);
+  assert.equal(budget('2', '1', '2', '3'), 12);
+  assert.equal(budget(1000, 1000000000, 1000000000, 1000000000), 3000000000000);
+  for (const args of [
+    ['2', -1, '200', Number.NaN],
+    [2.6, 1, 2, 3],
+    [Infinity, 1, 2, 3],
+    ['', 1, 2, 3],
+  ])
+    assert.throws(() => budget(...args), RangeError);
   assert.deepEqual(itinerary('23:30', 30, 3), ['23:30', '00:00', '00:30']);
   for (const values of [
     ['24:00', 30, 2],
@@ -545,4 +552,116 @@ test('manual smoke workflow is bounded integration CI with no schedule and only 
   );
   assert.match(workflow, /git add -- results\/model-check\.json/);
   assert.match(workflow, /steps\.model\.outcome.*success.*exit 1/);
+});
+
+function fixture() {
+  const html = baselineVariants()[0].content;
+  const fields = Object.fromEntries(
+    ['p', 't', 'e', 'f', 'go', 'out', 'error'].map((id) => [
+      id,
+      {
+        value: id === 'p' ? '1' : '0',
+        textContent: '',
+        events: {},
+        attrs: {},
+        focused: false,
+        addEventListener(type, fn) {
+          this.events[type] = fn;
+        },
+        setAttribute(k, v) {
+          this.attrs[k] = v;
+        },
+        removeAttribute(k) {
+          delete this.attrs[k];
+        },
+        focus() {
+          this.focused = true;
+        },
+      },
+    ]),
+  );
+  const events = {};
+  vm.runInNewContext(
+    html.match(/<script>([\s\S]*?)<\/script>/)[1],
+    {
+      document: { getElementById: (id) => fields[id] },
+      window: {
+        addEventListener(type, fn) {
+          events[type] = fn;
+        },
+      },
+    },
+    { timeout: 1000 },
+  );
+  return { fields, events, click: () => fields.go.onclick() };
+}
+
+test('generated budget validates each field and recovers focus/error state', () => {
+  for (const id of ['p', 't', 'e', 'f']) {
+    const f = fixture();
+    f.fields[id].value = '1.5';
+    f.click();
+    assert.equal(f.fields[id].attrs['aria-invalid'], 'true');
+    assert.equal(f.fields[id].focused, true);
+    assert.equal(f.fields.out.textContent, '');
+    f.fields[id].value = '2';
+    f.click();
+    assert.equal(f.fields[id].attrs['aria-invalid'], undefined);
+    assert.equal(f.fields.error.textContent, '');
+  }
+});
+test('all edits and page restores invalidate the previous computed total', () => {
+  for (const id of ['p', 't', 'e', 'f'])
+    for (const event of ['input', 'change']) {
+      const f = fixture();
+      f.fields.t.value = '100';
+      f.click();
+      assert.equal(f.fields.out.textContent, '100円');
+      f.fields[id].value = '2';
+      f.fields[id].events[event]();
+      assert.match(f.fields.out.textContent, /再計算/);
+    }
+  const f = fixture();
+  f.click();
+  f.events.pageshow();
+  assert.match(f.fields.out.textContent, /再計算/);
+});
+test('beforeprint clears old totals without trusting input events', () => {
+  const f = fixture();
+  f.fields.t.value = '100';
+  f.click();
+  f.fields.t.value = '999';
+  f.events.beforeprint();
+  assert.equal(f.fields.out.textContent, '');
+  assert.match(f.fields.error.textContent, /印刷/);
+});
+test('real producer accepts all baseline variants and bounded multibyte reports with an AI candidate', () => {
+  for (const v of baselineVariants())
+    assert.equal(reviewHtml(v.content).passed, true);
+  const research = SOURCES.map((url) => ({
+    url,
+    available: true,
+    excerpt: '園'.repeat(500),
+  }));
+  const candidate = {
+    title: 'draft',
+    summary: 'unverified',
+    files: [
+      {
+        path: 'ai-variant.html',
+        content:
+          '<!doctype html><meta name="viewport" content="width=device-width"><title>draft</title><input>'.padEnd(
+            2000,
+            ' ',
+          ),
+      },
+    ],
+  };
+  const a = makeArtifact('garden-budget', research, candidate, true);
+  assert.equal(a.files.length, 6);
+  assert(
+    a.files.reduce((total, f) => total + Buffer.byteLength(f.content), 0) <=
+      16384,
+  );
+  assert(Buffer.byteLength(JSON.stringify(a)) <= 24576);
 });
